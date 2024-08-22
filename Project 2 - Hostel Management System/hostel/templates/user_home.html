@@ -1,0 +1,37 @@
+{% extends 'user_navbar.html' %}
+{% block content %}
+
+<div class="row text-center">
+    <div class="col-sm-12 p-2">
+                <h4 class="text-success">Welcome Back to Hostel Management System</h4>
+        <br><br>
+                <span style="color: blue"><h5 class="text-capitalize">{{request.user.first_name}} {{request.user.last_name}}</h5></span>
+        <hr>
+    </div>
+</div>
+<div class="container">
+<div class="row mt-5">
+
+    <div class="col-sm-4 p-2 offset-2">
+        <center><div class="card shadow">
+            <div class="card-body">
+            <h4 class="text-danger"> <i class="fas fa-user-alt"></i> My Profile</h4>
+        </div>
+        <div class="card-footer">
+            <a href="{% url 'my_Profile' %}">View Details >></a>
+        </div>
+        </div></center>
+    </div>
+    <div class="col-sm-4 p-2">
+        <center><div class="card shadow">
+            <div class="card-body">
+                <h4 class="text-danger"><i class="fas fa-home"> </i> My Room</h4>
+            </div>
+            <div class="card-footer">
+                <a href="{% url 'room_Details' %}">View Details >></a>
+            </div>
+        </div></center>
+    </div>
+</div>
+</div>
+{% endblock content %}

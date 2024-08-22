@@ -1,0 +1,41 @@
+{% extends 'admin_base.html' %}
+{% block main  %}
+
+<div class="card shadow mt-5">
+    <div class="card-body">
+        <h5 class="p-2" style="border-bottom: 2px solid orange;">Manage Register Student</h5>
+        <div class="container-fluid mt-5">
+            <table class="table table-bordered table-sm" id="example">
+                <thead>
+                <tr>
+                    <th>S No.</th>
+                    <th>Student Name</th>
+                    <th>Reg No.</th>
+                    <th>Contact No.</th>
+                    <th>Room No.</th>
+                    <th>Room Type</th>
+                    <th>Stay From</th>
+                    <th>Action</th>
+                </tr>
+                </thead>
+                <tbody>
+             {% for i in stdata %}
+             <tr>
+                 <td>{{forloop.counter}}</td>
+                 <td>{{i.userreg.users.first_name}} {{i.userreg.users.last_name}}</td>
+                 <td>{{i.userreg.regNo}}</td>
+                 <td>{{i.userreg.contactNo}}</td>
+                 <td>{{i.rooms.room_no}}</td>
+                 <td>{{i.rooms.get_type_display}}</td>
+                 <td>{{i.stayfrom}}</td>
+                 <td><a href="{% url 'view_RegistrationDtls' i.id %}" class="text-primary">View</a> |
+                 <a href="{% url 'delete_StudentReg' i.id %}" class="text-danger" onclick="return confirm('Are You Sure?')">Delete</a></td>
+             </tr>
+             {% endfor %}
+             </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+
+{% endblock %}

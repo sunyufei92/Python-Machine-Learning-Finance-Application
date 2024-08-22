@@ -1,0 +1,49 @@
+{% extends 'admin_base.html' %}
+{% block main  %}
+
+<div class="card shadow mt-5">
+    <div class="card-body">
+        <h5 class="p-2" style="border-bottom: 2px solid orange;">Add Room</h5>
+        <div class="container-fluid">
+            <form method="POST">
+                {% csrf_token %}
+                <div class="form-row">
+                    <div class="col-sm-12">
+                        <div class="form-group">
+                            <label>Select Type</label>
+                           <Select name="type" class="form-control" required>
+                                <option value="s">Sports Room</option>
+                                <option value="l">Laundry Room</option>
+                           </Select>
+                        </div>
+                    </div>
+
+                    <div class="col-sm-12">
+                        <div class="form-group">
+                            <label>Room No.</label>
+                            <input type="text" name="room_no" class="form-control" placeholder="Enter Room Number" required>
+                        </div>
+                    </div>
+
+                </div>
+                <input type="submit" value="Submit" class="m-2 px-3 btn btn-primary">
+            </form>
+        </div>
+    </div>
+</div>
+
+{% if error ==  "no" %}
+<script>
+    alert('New Room has been Added');
+    window.location=('{% url 'manage_Room' %}');
+
+</script>
+{% endif %}
+{% if error == "yes" %}
+<script>
+    alert('Something Went Wrong. Please try again');
+</script>
+{% endif %}
+
+
+{% endblock %}

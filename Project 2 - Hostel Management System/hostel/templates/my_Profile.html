@@ -1,0 +1,65 @@
+{% extends 'user_navbar.html' %}
+{% block content %}
+
+<div class="container mt-5">
+    <div class="card shadow mt-2">
+        <div class="card-body">
+            <h2 class="text-center text-danger">PROFILE</h2>
+
+            <DIV class="row">
+                <div class="col-md-6">
+                    <b>Registration No. </b>
+                </div>
+                <div class="col-md-6" style="text-transform: capitalize">
+                    {{data.regNo}}
+                </div>
+            </DIV>
+            <hr>
+
+            <DIV class="row">
+                <div class="col-md-6">
+                    <b>Full Name  </b>
+                </div>
+                <div class="col-md-6" style="text-transform: capitalize">
+                    {{data.users.first_name}} {{data.users.last_name}}
+                </div>
+            </DIV>
+            <hr>
+
+            <DIV class="row">
+                <div class="col-md-6">
+                    <b>Gender  </b>
+                </div>
+                <div class="col-md-6" style="text-transform: capitalize">
+                    {{data.gender}}
+                </div>
+            </DIV>
+            <hr>
+
+            <DIV class="row">
+                <div class="col-md-6">
+                    <b>Contact Number  </b>
+                </div>
+                <div class="col-md-6" style="text-transform: capitalize">
+                    {{data.contactNo}}
+                </div>
+            </DIV>
+            <hr>
+
+            <DIV class="row">
+                <div class="col-md-6">
+                    <b>Email ID  </b>
+                </div>
+                <div class="col-md-5">
+                    {{data.users.username}}
+                </div>
+            </DIV>
+            <hr>
+
+            <a href="{% url 'edit_profile'  %}" class="btn btn-primary mt-4">Edit Profile</a>
+        </div>
+    </div>
+</div>
+
+
+{% endblock content %}

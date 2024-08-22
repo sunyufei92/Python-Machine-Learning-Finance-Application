@@ -1,0 +1,202 @@
+{% extends 'navigation.html' %}
+{% load static %}
+{% block main %}
+
+<style>
+table {
+  font-family: arial, sans-serif;
+  border-collapse: collapse;
+  width: 100%;
+}
+
+td, th {
+  border: 1px solid #dddddd;
+  text-align: left;
+  padding: 8px;
+}
+
+tr:nth-child(even) {
+  background-color: #dddddd;
+}
+
+
+.image1,.image2,.image3,.image4 {
+  opacity: 1;
+  display: block;
+  width: 100%;
+  
+  transition: .5s ease;
+  backface-visibility: hidden;
+}
+
+
+
+.image1:hover,.image2:hover,.image3:hover,.image4:hover{
+  opacity: 0.3;
+}
+
+
+
+
+
+</style>
+<body>
+<img src="{% static 'images/hostel1.jpg' %}"  style="width:100%; height:450px;">
+
+
+<div class="container">
+
+</div>
+</body>
+<div class="container mt-3">
+    <div class="row">  
+
+    </div>
+</div>
+
+
+<!-- User Registration -->
+{% if error == "no" %}
+<script>
+	   alert('Registration Successfully');
+       window.location=('{% url 'user_login' %}');
+</script>
+{% endif %}
+
+{% if error == "yes" %}
+<script>
+	    alert('Something went wrong, Try Again');
+
+
+
+</script>
+{% endif %}
+
+<script>
+    function checkpass()
+    {
+      if(document.signup.password.value!=document.signup.cpwd.value){
+        alert('Password and Confirm Password field does not match');
+        document.signup.cpwd.focus();
+        return false;
+      }
+      return true;
+    }
+</script>
+
+<div class="modal fade" id="userRegModal" tabindex="-1"
+     aria-labelledby="exampleModalLabel" aria-hidden="true">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3 class="modal-title" id="userRegModalLabel"
+                    style="font-family: 'Monotype Corsiva'; font-size: 35px;">Registration Form</h3>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"
+                        aria-label="Close"></button>
+            </div>
+            <div class="modal-body">
+                <form method="POST" class="signup" name="signup" enctype="multipart/form-data"
+                      onsubmit="return checkpass();">
+                    {% csrf_token %}
+                    <div class="mb-3">
+                        <label class="form-label">Registration No</label> <input type="number"
+                                                                                 class="form-control" name="regNo"
+                                                                                 value="{{regno}}" readonly>
+                    </div>
+
+                    <div class="mb-3">
+                        <label class="form-label">First Name</label> <input type="text"
+                                                                            class="form-control" name="firstName"
+                                                                            id="firstName"
+                                                                            placeholder="Enter here First Name"
+                                                                            required>
+                    </div>
+
+                    <div class="mb-3">
+                        <label class="form-label">Last Name</label> <input type="text"
+                                                                           class="form-control" name="lastName"
+                                                                           id="lastName"
+                                                                           placeholder="Enter here Last Name" required>
+                    </div>
+
+                    <div class="mb-3">
+                        <label class="form-label">Gender</label>
+                        <select name="gender" class="form-control" required="required">
+                            <option value="">Select Gender</option>
+                            <option value="Male">Male</option>
+                            <option value="Female">Female</option>
+                        </select>
+                    </div>
+
+                    <div class="mb-3">
+                        <label class="form-label">Contact Number</label> <input
+                            type="text" class="form-control" name="contactNo" id="contactNo"
+                            placeholder="48XXXXXXXXX" required>
+                    </div>
+
+                    <div class="mb-3">
+                        <label class="form-label">Email ID</label> <input type="email"
+                                                                          class="form-control" name="email" id="email"
+                                                                          placeholder="Ex-abc@gmail.com" required>
+                    </div>
+
+                    <div class="mb-3">
+                        <label class="form-label">Password</label>
+                        <input type="password" class="form-control" name="password" id="password"
+                               placeholder="Enter here Password" required>
+                    </div>
+
+                    <div class="mb-3">
+                        <label class="form-label">Confirm Password</label>
+                        <input type="password" class="form-control" name="cpwd" id="cpwd"
+                               placeholder="Enter Again Password" required>
+                    </div>
+                    <button type="submit" class="btn btn-primary" name="submit">Submit</button>
+                </form>
+            </div>
+            <div class="modal-footer"></div>
+        </div>
+    </div>
+</div>
+
+<!-- End User Registration -->
+
+<!-- User Login -->
+
+<div class="modal fade" id="userLoginModal" tabindex="-1"
+     aria-labelledby="exampleModalLabel" aria-hidden="true">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3 class="modal-title" id="userLoginModalLabel"
+                    style="font-family: 'Monotype Corsiva'; font-size: 35px;">User Login</h3>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"
+                        aria-label="Close"></button>
+            </div>
+            <div class="modal-body">
+                <form method="POST">
+                    {% csrf_token %}
+
+                    <div class="mb-3">
+                        <label class="form-label">Email ID</label> <input type="email"
+                                                                          class="form-control" name="email"
+                                                                          placeholder="Ex-abc@gmail.com" required>
+                    </div>
+
+                    <div class="mb-3">
+                        <label class="form-label">Password</label>
+                        <input type="password" class="form-control" name="password" placeholder="Enter here Password"
+                               required>
+                    </div>
+
+                    <button type="submit" class="btn btn-primary" name="submit">Submit</button>
+                </form>
+            </div>
+            <div class="modal-footer"></div>
+        </div>
+    </div>
+</div>
+
+<!-- End User Login -->
+{% include 'footer.html' %}
+{% endblock %}
