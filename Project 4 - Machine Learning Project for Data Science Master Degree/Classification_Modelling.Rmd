@@ -1,0 +1,794 @@
+---
+title: "Propensity to Purchase Classification Modelling"
+author: "Odomero Omokahfe; Sun Yufei"
+date: "2023-01-19"
+output:
+  html_document: default
+  pdf_document: default
+editor_options:
+  chunk_output_type: console
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Loading packages required
+```{r message = F, warning = F}
+library(readr)
+library(tidyverse)
+library(MASS)
+library(tree)
+library(caret)
+library(rpart)
+library(rpart.plot)
+library(rattle)
+library(pROC)
+library(here)
+library(e1071)
+library(xgboost)
+```
+
+# Introduction
+The aim of this project is to build a classification model, using Google Analytics data on each visitor session on Google Merchandise Store, that predicts whether each session will result in the visitor performing an action to add an item to the cart.
+
+The data was extracted from Google BigQuery kaggleworkshops.
+
+```{r message = F, warning = F}
+# Loading Data
+google_store_data <- read_csv("data/google_store_analytics.csv") 
+```
+
+```{r}
+# Data Preview
+google_store_data %>% glimpse()
+```
+
+See dataset schema below;
+**fullVisitorId**: The unique visitor ID.
+**visitStartTime**: The timestamp (expressed as POSIX time).
+**date**: The date of the session.
+**deviceCategory**: The type of device (Mobile, Tablet, Desktop).
+**isMobile**: If the user is on a mobile device, this value is true, otherwise false.
+**operatingSystem**: The operating system of the device (e.g., "Macintosh" or "Windows").
+**browser**: The browser used (e.g., "Chrome" or "Firefox").
+**country**: The country from which sessions originated, based on IP address.
+**city**: Users' city, derived from their IP addresses or Geographical IDs
+**trafficSource**: The source of the traffic source. Could be the name of the search engine, the referring hostname, or a value of the utm_source URL parameter.
+**trafficMedium**: The medium of the traffic source. Could be "organic", "cpc", "referral", or the value of the utm_medium URL parameter.
+**trafficCampaign**: The campaign value. Usually set by the utm_campaign URL parameter.
+**isFirstVisit**: 1 if this is the first visit made by the visitor, otherwise 0.
+**isBounce**: 1 if the visitor went to only one webpage and did not come back, otherwise 0.
+**totalVisits**: The total number of visits by the visitor across sessions.
+**totalHits**: The total number of interactions across sessions.
+**totalPageviews**: The total number of page views across sessions.
+**totalTimeOnSite**: The total time on site.
+**totalTransactions**: The total number of interactions across sessions.
+**productPagesViewed**: The number of product pages viewed in the session.
+**addedToCart**: 1 if the visitor added an item to the cart or made further downstream actions (checkout, transaction), otherwise 0 (if the visitor only browsed but never added an item to the cart).
+
+**We will consider predicting probability of a visitor adding to cart during a session**
+**(`addedToCart`) given a set of characteristics.**
+
+
+# Data Preprocessing and Analysis 
+
+**Let's examine frequencies of the target variable:**
+```{r cars}
+table(google_store_data$addedToCart)
+table(google_store_data$addedToCart)/length(google_store_data$addedToCart)
+
+barplot(table(google_store_data$addedToCart)/length(google_store_data$addedToCart),
+        col = "darkblue",  # colors
+        main = "Frequency of Target Variable",
+        horiz = F,  # horizontal type of plot
+        las = 1,    # labels always horizontally
+        cex.names = 0.6)
+```
+
+About 
+`r as.numeric(round(table(google_store_data$addedToCart)[1]/length(google_store_data$addedToCart)*100, 2))` % of observations did not add an item to cart.
+
+**Let us also set the levels `1` as the first one.**
+```{r}
+google_store_data$addedToCart <- ifelse(
+  google_store_data$addedToCart == 1, "Yes", "No")
+
+google_store_data$addedToCart <- factor(google_store_data$addedToCart, levels = c("Yes", "No"))
+table(google_store_data$addedToCart)
+```
+
+#### Transforming variables
+```{r}
+# Transforming qualitative variables
+
+google_store_data$city[google_store_data$city == "not available in demo dataset"] <- "not set"
+
+google_store_data_nominal <- 
+  sapply(google_store_data[, -1], is.character) %>% 
+  which() %>% 
+  names()
+
+for (var in google_store_data_nominal) {
+  if (var == "date") {
+    next
+  }
+  google_store_data[[var]] <- as.factor(google_store_data[[var]])
+}
+
+google_store_data$isMobile <- as.factor(google_store_data$isMobile)
+```
+
+
+```{r}
+# Transforming quantitative variables
+google_store_data_quant <- 
+  sapply(google_store_data[, -1], is.double) %>% 
+  which() %>% 
+  names()
+
+for (var in google_store_data_quant) {
+  google_store_data[[var]] <- as.integer(google_store_data[[var]])
+}
+
+# Transforming date variable
+google_store_data$date <- as.Date(google_store_data$date, "%Y-%m-%d")
+```
+
+#### Feature engineering
+```{r}
+# Create day and month columns from date
+google_store_data <- google_store_data %>%
+  dplyr::mutate(month = lubridate::month(date), 
+                day = lubridate::day(date))
+
+# Transform into factors
+for (var in c("month","day")) {
+  google_store_data[[var]] <- as.factor(google_store_data[[var]])
+}
+```
+
+
+**Let's review the new structure of the dataset**
+```{r}
+glimpse(google_store_data)
+```
+
+
+**Check for missing values**
+```{r}
+# Lets check if there are any missing values
+any(is.na(google_store_data))
+```
+
+**Descriptive Summary**
+
+We will proceed to exclude fullVisitorId, date and totalVisits(1 visit per observation) from our models as they will have no contribution to the analysis.
+```{r}
+summary(google_store_data)
+```
+
+
+# Model Building and Evaluation
+
+### Divide dataset into train, validation and test sample
+```{r}
+# Split dataset into 80% train and 20% test
+set.seed(123456789)
+train_obs <- createDataPartition(google_store_data$addedToCart, 
+                                    p = 0.8, 
+                                    list = FALSE) 
+
+data.train <- google_store_data[train_obs,]
+google_store_data.test  <- google_store_data[-train_obs,]
+
+# Split train data into 60% train and 40% validation
+val_obs <- createDataPartition(data.train$addedToCart, 
+                                    p = 0.6, 
+                                    list = FALSE) 
+google_store_data.train <- data.train[val_obs,]
+google_store_data.val  <- data.train[-val_obs,]
+
+```
+
+**Let's view frequenncies of the datasets**
+```{r}
+# Train data
+table(google_store_data.train$addedToCart)
+table(google_store_data.train$addedToCart)/length(google_store_data.train$addedToCart)
+
+# Validation data
+table(google_store_data.val$addedToCart)
+table(google_store_data.val$addedToCart)/length(google_store_data.val$addedToCart)
+
+# Test data
+table(google_store_data.test$addedToCart)
+table(google_store_data.test$addedToCart)/length(google_store_data.test$addedToCart)
+```
+
+**Same frequency was maintained across 3 datasets **
+
+
+### Decision Tree Modelling
+
+#### Define the formula of the model with all meaningful predictors
+```{r}
+dt.model.1.formula <- addedToCart ~ visitStartTime + deviceCategory +
+  isMobile + operatingSystem + browser + country + city + trafficSource + 
+  trafficMedium + trafficCampaign + isFirstVisit + totalHits + totalPageviews +
+  totalTimeOnSite + productPagesViewed + month + day
+```
+
+
+#### Building Tree 1 with default parameters 
+```{r}
+google_store_data.tree.1 <- 
+  rpart(dt.model.1.formula,
+        data = google_store_data.train, 
+        method = "class") # type of the tree: classification
+
+google_store_data.tree.1
+
+fancyRpartPlot(google_store_data.tree.1)
+```
+
+#### Building Tree 2 with minsplit = 1000 and minbucket = 400
+```{r}
+google_store_data.tree.2 <- 
+  rpart(dt.model.1.formula,
+        data = google_store_data.train,
+        method = "class",
+        minsplit = 1000, 
+        minbucket = 400,
+        maxdepth = 30 )
+
+google_store_data.tree.2
+fancyRpartPlot(google_store_data.tree.2)
+```
+
+
+#### Cross validation using different values of cp coefficient
+```{r}
+control_1 <- trainControl(method = "cv",
+                   number = 10, 
+                   classProbs = TRUE,
+                   summaryFunction = twoClassSummary)
+```
+
+#### Building Tree 3 with cross validation of cp
+```{r}
+modelLookup("rpart")
+
+cp.grid <- expand.grid(cp = seq(0, 0.01, 0.001))
+
+set.seed(123456789)
+google_store_data.tree.3 <- 
+  train(dt.model.1.formula,
+        data = google_store_data.train, 
+        method = "rpart", 
+        metric = "ROC",
+        trControl = control_1,
+        tuneGrid  = cp.grid)
+
+google_store_data.tree.3
+```
+
+#### Let's evaluate the models using GINI coefficient
+```{r}
+train.tree1.pred <- predict(google_store_data.tree.1, google_store_data.train)
+train.tree1.ROC  <- roc(
+  as.numeric(google_store_data.train$addedToCart == "Yes"), train.tree1.pred[, 1])
+
+
+train.tree2.pred <- predict(google_store_data.tree.2, google_store_data.train)
+train.tree2.ROC  <- roc(
+  as.numeric(google_store_data.train$addedToCart == "Yes"), train.tree2.pred[, 1])
+
+
+train.tree3.pred <- predict(google_store_data.tree.3, google_store_data.train)
+train.tree3.ROC  <- roc(
+  as.numeric(google_store_data.train$addedToCart == "Yes"), as.numeric(train.tree3.pred))
+```
+
+#### Model Evaluation on train data
+```{r}
+# Model evaluation on train data
+list(
+  train.tree1.ROC  = train.tree1.ROC,
+  train.tree2.ROC = train.tree2.ROC,
+  train.tree3.ROC = train.tree3.ROC
+) %>%
+  pROC::ggroc(alpha = 0.5, linetype = 1, size = 1) + 
+  geom_segment(aes(x = 1, xend = 0, y = 0, yend = 1), 
+               color = "grey", 
+               linetype = "dashed") +
+  labs(subtitle = paste0("Gini TRAIN: ",
+                         "tree1 = ",
+                         round(100*(2 * auc(train.tree1.ROC) - 1), 1), "%, ",
+                         "tree2 = ", 
+                         round(100*(2 * auc(train.tree2.ROC) - 1), 1), "% ",
+                         "\ntree3 =", 
+                         round(100*(2 * auc(train.tree3.ROC) - 1), 1), "% ")) +
+  theme_bw() + coord_fixed() +
+  scale_color_brewer(palette = "Paired")
+```
+**Tree 1 with default parameters have a slightly higher GINI index of 71.5% compared to Tree 2 with minsplit = 1000 and minbucket = 400 with AUC of 68.4%**
+
+**On resampling, Tree 3 with cross validation have a higher GINI index of 92.8% compared to Tree 1 and 2 with AUC of 81.6%**
+
+### Building Tree 4 with large trees and pruning
+```{r}
+google_store_data.tree.4 <- 
+  rpart(dt.model.1.formula,
+        data = google_store_data.train,
+        method = "class",
+        minsplit = 320, # ~ 2% of the training set
+        minbucket = 160, # ~ 1% of the training set
+        maxdepth = 30, # default
+        cp = -1)
+
+google_store_data.tree.4
+fancyRpartPlot(google_store_data.tree.4)
+```
+
+#### Building Tree 4p with pruning of large trees
+```{r}
+opt <- which.min(google_store_data.tree.4$cptable[, "xerror"])
+cp <- google_store_data.tree.4$cptable[opt, "CP"]
+
+google_store_data.tree.4p <- 
+  prune(google_store_data.tree.4, cp = cp)
+
+fancyRpartPlot(google_store_data.tree.4p)
+```
+
+#### Model Evaluation on train data
+```{r}
+train.tree4.pred <- predict(google_store_data.tree.4, 
+                            google_store_data.train)
+train.tree4.ROC  <- roc(
+  as.numeric(google_store_data.train$addedToCart == "Yes"), train.tree4.pred[, 1])
+
+train.tree4p.pred <- predict(google_store_data.tree.4p, 
+                            google_store_data.train)
+train.tree4p.ROC  <- roc(
+  as.numeric(google_store_data.train$addedToCart == "Yes"), train.tree4p.pred[, 1])
+```
+
+
+```{r}
+# Model evaluation on train data
+list(
+  train.tree4.ROC  = train.tree4.ROC,
+  train.tree4p.ROC = train.tree4p.ROC
+) %>%
+  pROC::ggroc(alpha = 0.5, linetype = 1, size = 1) + 
+  geom_segment(aes(x = 1, xend = 0, y = 0, yend = 1), 
+               color = "grey", 
+               linetype = "dashed") +
+  labs(subtitle = paste0("Gini tree4 Train: ",
+                         round(100*(2 * auc(train.tree4.ROC) - 1), 1), "%, ",
+                         "Gini tree4p Train: ", 
+                         round(100*(2 * auc(train.tree4p.ROC) - 1), 1), "% ")) +
+  theme_bw() + coord_fixed() +
+  # scale_color_brewer(palette = "Paired") +
+  scale_color_manual(values = RColorBrewer::brewer.pal(n = 4, 
+                                                       name = "Paired")[c(2, 4)])
+```
+
+**The larger tree seems to have a more higher GINI index of 93% but its possible there might be some overfitting**
+
+**Pruned tree 4 and tree 2 with minsplit = 1000 and minbucket = 400 has same GINI index of 70.7%**
+
+**On resampling, the larger tree 4 still have a better performance with higher GINI index of 95.1% while pruned tree 4p have a similar GINI index of 70.5%**
+
+
+#### Let's look at variable importance using Tree 4 with highest AUC
+```{r}
+tree.4.importance <- google_store_data.tree.4$variable.importance
+tree.4.importance
+
+par(mar = c(5.1, 6.1, 4.1, 2.1))
+barplot(rev(tree.4.importance), # vactor
+        col = "purple",  # colors
+        main = "importance of variables in model tree4",
+        horiz = T,  # horizontal type of plot
+        las = 1,    # labels always horizontally 
+        cex.names = 0.6)
+```
+
+```{r}
+(tree.4.importance.2 <- varImp(google_store_data.tree.4))
+
+tree.4.importance.2 <- tree.4.importance.2 %>%
+  rownames_to_column("variable") %>%
+  arrange(desc(Overall))
+
+barplot(rev(tree.4.importance.2$Overall),
+        names.arg = rev(tree.4.importance.2$variable), 
+        col = "grey",  # colors
+        main = "importance of variables in tree4",
+        horiz = T,  # horizontal type of plot
+        las = 1,    # labels always horizontally
+        cex.names = 0.6)
+```
+
+**Let us examine top 10 variables for  both criteria **
+```{r}
+var_Imp <- intersect(tree.4.importance.2$variable[1:11],
+          names(tree.4.importance)[1:11])
+var_Imp
+```
+
+
+```{r}
+dt.model.2.formula <- addedToCart ~ operatingSystem +  city + visitStartTime +totalHits + totalPageviews + totalTimeOnSite + productPagesViewed + month + day
+```
+
+### Let's build Tree 5 using important variables
+```{r}
+google_store_data.tree.5 <- 
+  rpart(dt.model.2.formula,
+        data = google_store_data.train,
+        method = "class",
+        minsplit = 80, 
+        minbucket = 30,
+        maxdepth = 20 )
+
+google_store_data.tree.5
+fancyRpartPlot(google_store_data.tree.5)
+```
+
+
+```{r}
+train.tree5.pred <- predict(google_store_data.tree.5, 
+                            google_store_data.train)
+train.tree5.ROC  <- roc(
+  as.numeric(google_store_data.train$addedToCart == "Yes"), train.tree5.pred[, 1])
+
+cat("Gini train = ", 2 * train.tree5.ROC$auc - 1, "\n", sep = "")
+```
+
+### Model evaluation on validation data
+```{r}
+val.tree1.pred <- predict(google_store_data.tree.1, google_store_data.val)
+val.tree1.ROC  <- roc(
+  as.numeric(google_store_data.val$addedToCart == "Yes"), val.tree1.pred[, 1])
+
+
+val.tree2.pred <- predict(google_store_data.tree.2, google_store_data.val)
+val.tree2.ROC  <- roc(
+  as.numeric(google_store_data.val$addedToCart == "Yes"), val.tree2.pred[, 1])
+
+
+val.tree3.pred <- predict(google_store_data.tree.3, google_store_data.val)
+val.tree3.ROC  <- roc(
+  as.numeric(google_store_data.val$addedToCart == "Yes"), as.numeric(val.tree3.pred))
+
+val.tree4.pred <- predict(google_store_data.tree.4, google_store_data.val)
+val.tree4.ROC  <- roc(
+  as.numeric(google_store_data.val$addedToCart == "Yes"), val.tree4.pred[, 1])
+
+val.tree4p.pred <- predict(google_store_data.tree.4p, google_store_data.val)
+val.tree4p.ROC  <- roc(
+  as.numeric(google_store_data.val$addedToCart == "Yes"), val.tree4p.pred[, 1])
+
+val.tree5.pred <- predict(google_store_data.tree.5, google_store_data.val)
+val.tree5.ROC  <- roc(
+  as.numeric(google_store_data.val$addedToCart == "Yes"), val.tree5.pred[, 1])
+```
+
+
+```{r}
+list(
+  val.tree1.ROC  = val.tree1.ROC,
+  val.tree2.ROC = val.tree2.ROC,
+  val.tree3.ROC = val.tree3.ROC,
+  val.tree4.ROC = val.tree4.ROC,
+  val.tree4p.ROC = val.tree4p.ROC,
+  val.tree5.ROC = val.tree5.ROC
+) %>%
+  pROC::ggroc(alpha = 0.5, linetype = 1, size = 1) + 
+  geom_segment(aes(x = 1, xend = 0, y = 0, yend = 1), 
+               color = "grey", 
+               linetype = "dashed") +
+  labs(subtitle = paste0("Gini Validation: ",
+                         "tree1 = ",
+                         round(100*(2 * auc(val.tree1.ROC) - 1), 1), "%, ",
+                         "tree2 = ", 
+                         round(100*(2 * auc(val.tree2.ROC) - 1), 1), "% ",
+                         "tree3 = ", 
+                         round(100*(2 * auc(val.tree3.ROC) - 1), 1), "% ",
+                         "\ntree4 = ", 
+                         round(100*(2 * auc(val.tree4.ROC) - 1), 1), "% ",
+                         "tree4p = ", 
+                         round(100*(2 * auc(val.tree4p.ROC) - 1), 1), "% ",
+                         "tree5 = ", 
+                         round(100*(2 * auc(val.tree5.ROC) - 1), 1), "% ")) +
+  theme_bw() + coord_fixed() +
+  scale_color_brewer(palette = "Paired") 
+  
+```
+**Trees had same order of performance on validation data with Tree 4 (large tree having a higher Gini Index of 87.7% **
+
+**On resampling, Performance on validation data  shows Tree 4 (large tree) having a lower Gini Index of 83.9%, but other treees had a higher increase in GINI index **
+
+
+## XGBoost Modelling
+
+```{r}
+dt.model.1.formula <- addedToCart ~ visitStartTime + deviceCategory +
+  isMobile + operatingSystem + browser + country + city + trafficSource + 
+  trafficMedium + trafficCampaign + isFirstVisit + totalHits + totalPageviews +
+  totalTimeOnSite + productPagesViewed + month + day
+```
+
+**Balancing the data**
+```{r}
+google_store_data.train <-
+  ROSE::ovun.sample(formula = dt.model.1.formula, 
+                    data = google_store_data[train_obs,],
+                    method = "both",
+                    p = 0.5, 
+                    N = length(train_obs),
+                    seed = 123)[["data"]]
+
+data.test  <- google_store_data[-train_obs,]
+
+set.seed(123456789)
+val_obs <- createDataPartition(data.test$addedToCart, 
+                                    p = 0.5, 
+                                    list = FALSE) 
+google_store_data.val <- data.test[val_obs,]
+google_store_data.test  <- data.test[-val_obs,]
+```
+
+**Note: At this point we went back to re-evaluate decision tree models built to observe if the balancing of the data would positive affect models performance **
+
+```{r}
+control_2 <- trainControl(method = "cv", 
+                         number = 5,
+                         classProbs = TRUE,
+                         summaryFunction = twoClassSummary)
+```
+
+
+**Let's tune n-rounds **
+```{r}
+param_xgb <- expand.grid(nrounds = seq(20, 80, 10),
+                             max_depth = c(8),
+                             eta = c(0.25), 
+                             gamma = 1,
+                             colsample_bytree = c(0.2),
+                             min_child_weight = c(150),
+                             subsample = 0.8)
+
+set.seed(123456789)
+google_store_data.xgb <- train(dt.model.1.formula,
+                     data = google_store_data.train,
+                     method = "xgbTree",
+                     trControl = control_2,
+                     tuneGrid  = param_xgb)
+
+google_store_data.xgb
+```
+
+**Let's tune max_depth, colsample_bytre and min_child_weight **
+```{r}
+param_xgb2 <- expand.grid(nrounds = 80,
+                              max_depth = seq(5, 15, 2),
+                              eta = c(0.25), 
+                              gamma = 1,
+                              colsample_bytree = seq(0.5,0.8,0.1),
+                              min_child_weight = seq(150, 500, 150),
+                              subsample = 0.8)
+
+set.seed(123456789)
+google_store_data.xgb2 <- train(dt.model.1.formula,
+                      data = google_store_data.train,
+                      method = "xgbTree",
+                      trControl = control_2,
+                      tuneGrid  = param_xgb2)
+
+google_store_data.xgb2
+
+```
+
+**Saving xgb model 2 due to long runtime**
+```{r}
+#google_store_data.xgb2 %>% saveRDS(here("models_output", "google_store_data.xgb2.rds"))
+```
+
+**Let's tune eta**
+```{r}
+param_xgb3 <- expand.grid(nrounds = 80,
+                              max_depth = 11,
+                              eta = seq(0.05, 0.25, 0.03), 
+                              gamma = 1,
+                              colsample_bytree = 0.8,
+                              min_child_weight = 150,
+                              subsample = 0.8)
+
+set.seed(123456789)
+google_store_data.xgb3 <- train(dt.model.1.formula,
+                      data = google_store_data.train,
+                      method = "xgbTree",
+                      trControl = control_2,
+                      tuneGrid  = param_xgb3)
+google_store_data.xgb3
+```
+
+**Saving xgb model 3 due to long runtime**
+```{r}
+#google_store_data.xgb3 %>% saveRDS(here("models_output", "google_store_data.xgb3.rds"))
+```
+
+**Let's increase number of trees, reduce the learning rate**
+```{r}
+param_xgb4 <- expand.grid(nrounds = 300,
+                              max_depth = 11,
+                              eta = 0.08, 
+                              gamma = 1,
+                              colsample_bytree = 0.8,
+                              min_child_weight = 150,
+                              subsample = 0.8)
+
+set.seed(123456789)
+google_store_data.xgb4 <- train(dt.model.1.formula,
+                      data = google_store_data.train,
+                      method = "xgbTree",
+                      trControl = control_2,
+                      tuneGrid  = param_xgb4)
+
+google_store_data.xgb4
+```
+
+**Saving xgb model 4 due to long runtime**
+```{r}
+#google_store_data.xgb4 %>% saveRDS(here("models_output", "google_store_data.xgb4.rds"))
+```
+
+#### Let us compare the models estimated so far on the train dataset **
+```{r}
+ROC.train.xgb <- pROC::roc(google_store_data.train$addedToCart, 
+                           predict(google_store_data.xgb, google_store_data.train, 
+                                   type = "prob", n.trees = 500)[, "Yes"])
+
+ROC.train.xgb2 <- pROC::roc(google_store_data.train$addedToCart, 
+                           predict(google_store_data.xgb2, google_store_data.train, 
+                                   type = "prob", n.trees = 500)[, "Yes"])
+
+ROC.train.xgb3 <- pROC::roc(google_store_data.train$addedToCart, 
+                           predict(google_store_data.xgb3, google_store_data.train, 
+                                   type = "prob", n.trees = 500)[, "Yes"])
+
+ROC.train.xgb4 <- pROC::roc(google_store_data.train$addedToCart, 
+                           predict(google_store_data.xgb4, google_store_data.train, 
+                                   type = "prob", n.trees = 500)[, "Yes"])
+
+```
+
+##### Plotting ROC Curves
+```{r}
+list(
+  ROC.train.xgb  = ROC.train.xgb,
+  ROC.train.xgb2 = ROC.train.xgb2,
+  ROC.train.xgb3 = ROC.train.xgb3,
+  ROC.train.xgb4 = ROC.train.xgb4
+) %>%
+  pROC::ggroc(alpha = 0.5, linetype = 1, size = 1) + 
+  geom_segment(aes(x = 1, xend = 0, y = 0, yend = 1), 
+               color = "grey", 
+               linetype = "dashed") +
+  labs(subtitle = paste0("Gini TRAIN: ",
+                         "xgb1 = ", 
+                         round(100 * (2 * auc(ROC.train.xgb) - 1), 1), "%, ",
+                         "xgb2 = ", 
+                         round(100 * (2 * auc(ROC.train.xgb2) - 1), 1), "%, ",
+                         "\nxgb3 = ", 
+                         round(100 * (2 * auc(ROC.train.xgb3) - 1), 1), "%, ",
+                         "xgb4 = ", 
+                         round(100 * (2 * auc(ROC.train.xgb4) - 1), 1), "%, ")) +
+  theme_bw() + coord_fixed() +
+  scale_color_brewer(palette = "Paired")
+```
+**All models had quite similar results with last model(xgb4) having higher number of trees(300) and lower learning rate of 0.08 performing better with a higher GINI index of 94.6% **
+
+
+#### Let us compare the models estimated so far on the validation dataset **
+```{r}
+
+ROC.val.xgb  <- pROC::roc(google_store_data.val$addedToCart, 
+                           predict(google_store_data.xgb, google_store_data.val, 
+                                   type = "prob", n.trees = 500)[, "Yes"])
+
+ROC.val.xgb2  <- pROC::roc(google_store_data.val$addedToCart, 
+                           predict(google_store_data.xgb2, google_store_data.val, 
+                                   type = "prob", n.trees = 500)[, "Yes"])
+
+ROC.val.xgb3  <- pROC::roc(google_store_data.val$addedToCart, 
+                           predict(google_store_data.xgb3, google_store_data.val, 
+                                   type = "prob", n.trees = 500)[, "Yes"])
+
+ROC.val.xgb4  <- pROC::roc(google_store_data.val$addedToCart, 
+                           predict(google_store_data.xgb4, google_store_data.val, 
+                                   type = "prob", n.trees = 500)[, "Yes"])
+```
+
+**Plotting ROC Curves**
+```{r}
+list(
+  ROC.val.xgb  = ROC.val.xgb,
+  ROC.val.xgb2 = ROC.val.xgb2,
+  ROC.val.xgb3 = ROC.val.xgb3,
+  ROC.val.xgb4 = ROC.val.xgb4
+) %>%
+  pROC::ggroc(alpha = 0.5, linetype = 1, size = 1) + 
+  geom_segment(aes(x = 1, xend = 0, y = 0, yend = 1), 
+               color = "grey", 
+               linetype = "dashed") +
+  labs(subtitle = paste0("Gini VAL: ",
+                         "xgb1 = ", 
+                         round(100 * (2 * auc(ROC.val.xgb) - 1), 1), "%, ",
+                         "xgb2 = ", 
+                         round(100 * (2 * auc(ROC.val.xgb2) - 1), 1), "%, ",
+                         "\nxgb3 = ", 
+                         round(100 * (2 * auc(ROC.val.xgb3) - 1), 1), "%, ",
+                         "xgb4 = ", 
+                         round(100 * (2 * auc(ROC.val.xgb4) - 1), 1), "%, ")) +
+  theme_bw() + coord_fixed() +
+  scale_color_brewer(palette = "Paired")
+```
+**The performance on validation data is not so distant from that of train data with xgb4 having a higher GINI index of 91.8%**
+
+
+#### Let us compare best models estimated so far on the test dataset 
+
+**For final testing, we used resampled data**
+```{r}
+test.tree4.pred <- predict(google_store_data.tree.4, 
+                            google_store_data.test)
+test.tree4.ROC  <- roc(
+  as.numeric(google_store_data.test$addedToCart == "Yes"), test.tree4.pred[, 1])
+
+test.xgb4.ROC  <- pROC::roc(google_store_data.test$addedToCart, 
+                           predict(google_store_data.xgb4, google_store_data.test, 
+                                   type = "prob", n.trees = 500)[, "Yes"])
+```
+
+**Plotting ROC Curves**
+```{r}
+list(
+  test.tree4.ROC  = test.tree4.ROC,
+  test.xgb4.ROC = test.xgb4.ROC
+) %>%
+  pROC::ggroc(alpha = 0.5, linetype = 1, size = 1) + 
+  geom_segment(aes(x = 1, xend = 0, y = 0, yend = 1), 
+               color = "grey", 
+               linetype = "dashed") +
+  labs(subtitle = paste0("Gini TEST: ",
+                         "tree4 = ", 
+                         round(100 * (2 * auc(test.tree4.ROC) - 1), 1), "%, ",
+                         "xgb4 = ", 
+                         round(100 * (2 * auc(test.xgb4.ROC) - 1), 1), "%, ")) +
+  theme_bw() + coord_fixed() +
+  scale_color_brewer(palette = "Paired")
+```
+**On testing data XGBoost had a higher performance of 92%
+
+# Conclusion
+
+We built Decision tree models and XGBoost models to predict whether each session will result in the visitor performing an action to add an item to the cart.
+
+FullVisitorId, date and totalVisits were excluded for model building. Day and month were engineered from the date column to improve performance of ML models and they were part of the top 10 variables that contributed to the model performance
+
+GINI index was used to evaluate the models. XGBoost was chosen as the final model as it had better performance on validation(91.8%) and test datasets(92.2%) compared to Decision Trees.
+
+
+
+
+
+
+
+
+
